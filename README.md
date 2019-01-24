@@ -10,8 +10,8 @@ python3.5
 
 ## Overview  
 ### Data  
+Download [datasets](http://andrewjanowczyk.com/wp-static/nuclei.tgz)
 ```bash
-   Download [datasets](http://andrewjanowczyk.com/wp-static/nuclei.tgz)
    tar -xvzf nuclei.tgz
    mv nuclei/*  ~/public/DL_tutorial_Code/1-nuclei/images
 ```
