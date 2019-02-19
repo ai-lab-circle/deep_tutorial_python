@@ -5,6 +5,14 @@ import random
 import threading
 import time
 import pickle
+import os
+import numpy as np
+import scipy as sp
+from skimage import measure
+from skimage import morphology
+from scipy import ndimage as ndi
+import bisect
+#from numba import jit
 
 ##@@@  user local directory
 input_dir = '../DL_tutorial_Code/1-nuclei/images/'
@@ -24,25 +32,121 @@ class struct:
         s = subfilestruct(base, fnames_subs_pos, fnames_subs_neg)
         self.sub_file.insert(idx, s)
 
+# #refence : https://stackoverflow.com/questions/39767612/what-is-the-equivalent-of-matlabs-imadjust-in-python
+# kimyy
+# separate tolerance paramter into min and max
+
+
+def imadjust(src, min_tol = 0.01, max_tol = 0.99, vin=[0,255], vout=(0,255)):
+    # src : input one-layer image (numpy array)
+    # tol : tolerance, from 0 to 100.
+    # vin  : src image bounds
+    # vout : dst image bounds
+    # return : output img
+
+    dst = src.copy()
+    #tol = max(0, min(100, tol))
+
+    #if tol > 0:
+        # Compute in and out limits
+        # Histogram
+    hist = np.zeros(256, dtype=np.int)
+    for r in range(src.shape[0]):
+        for c in range(src.shape[1]):
+            hist[src[r,c]] += 1
+    # Cumulative histogram
+    cum = hist.copy()
+    for i in range(1, len(hist)):
+        cum[i] = cum[i - 1] + hist[i]
+
+    # Compute bounds
+    total = src.shape[0] * src.shape[1]
+    low_bound = total * min_tol
+    upp_bound = total * max_tol
+    vin[0] = bisect.bisect_left(cum, low_bound)
+    vin[1] = bisect.bisect_left(cum, upp_bound)
+
+    # Stretching
+    scale = (vout[1] - vout[0]) / (vin[1] - vin[0])
+    for r in range(dst.shape[0]):
+        for c in range(dst.shape[1]):
+            vs = max(src[r,c] - vin[0], 0)
+            vd = min(int(vs * scale + 0.5) + vout[0], vout[1])
+            dst[r,c] = vd
+    return dst
+
+
+def flood_fill(test_array,h_max=255):
+    input_array = np.copy(test_array)
+    el = sp.ndimage.generate_binary_structure(2,2).astype(np.int)
+    inside_mask = sp.ndimage.binary_erosion(~np.isnan(input_array), structure=el)
+    output_array = np.copy(input_array)
+    output_array[inside_mask]=h_max
+    output_old_array = np.copy(input_array)
+    output_old_array.fill(0)
+    el = sp.ndimage.generate_binary_structure(2,1).astype(np.int)
+    while not np.array_equal(output_old_array, output_array):
+        output_old_array = np.copy(output_array)
+        output_array = np.maximum(input_array,sp.ndimage.grey_erosion(output_array, size=(3,3), footprint=el))
+    return output_array
+
 def makeNegativeMask(io, patchDim):
     ior = io[:, :, 2]
-    _, img = cv2.threshold(ior, 100, 255, cv2.THRESH_TRUNC)
-    _, img2 = cv2.threshold(ior, 75, 255, cv2.THRESH_BINARY_INV)
-    kernel = np.ones((6, 6), np.uint8)
-    bw = cv2.morphologyEx(img2, cv2.MORPH_OPEN, kernel)
-    mask = np.zeros(((io.shape[0]+2), (io.shape[1]+2)), np.uint8)
-    cv2.floodFill(bw, mask, (0, 0), 0)
 
-    kernel = np.ones((20, 20), np.uint8)
-    bw = cv2.dilate(bw, kernel, 3)
+    #cv2.imshow('orginal', ior)
+    #_, img = cv2.threshold(ior, 100, 255, cv2.THRESH_TRUNC)
+    #_, img2 = cv2.threshold(ior, 75, 255, cv2.THRESH_BINARY_INV)
 
-    kernel = np.ones((patchDim, patchDim), np.float32)/(patchDim*patchDim)
+    #ior = cv2.resize(ior, (int(ior.shape[0]/2), int(ior.shape[1]/2)))
+    adjusted_img = imadjust(ior, 0.03, 0.5)
+
+    #print(adjusted_img[0:18,0:18])
+    #cv2.imshow('adj', adjusted_img)
+    #print(adjusted_img)
+    #adjusted_img.astype(np.uint8)
+
+    #select the dark regions to have a nuclei estimate
+    _, bw = cv2.threshold(adjusted_img, 25, 255, cv2.THRESH_BINARY_INV)
+    #bw =  adjusted_img < 0.3
+
+
+
+    #cv2.imshow("bw", bw)
+    #cv2.waitKey(0)
+
+    labels = measure.label(bw)
+    props = measure.regionprops(labels)
+
+    bw = morphology.remove_small_objects(labels, 100).astype(np.uint8)
+    mask = np.zeros(((ior.shape[0]+2), (ior.shape[1]+2))).astype(np.uint8)
+
+    #cv2.floodFill(bw, mask, (0, 0), 0)
+
+    seed = np.copy(bw)
+    seed[1:-1,1:-1] = bw.max()
+    mask = bw
+
+
+    bw = morphology.reconstruction(seed, mask, method = 'erosion')
+    #cv2.imshow("floadfill", bw)
+
+    bw = bw.astype(np.uint8)
+    #print(type(bw))
+
+    kernel = np.ones((patchDim, patchDim))
     im = cv2.filter2D(bw, -1, kernel)
-    bw - cv2.subtract(bw, im)
-
-
-    bw = cv2.bitwise_not(bw)
-
+    #print(im)
+    #cv2.imshow('im', im)
+    bw =  cv2.bitwise_not(im)
+    #cv2.imshow('bit_not', bw)
+    #cv2.waitKey(0)
+    #print(max(bw))
+    #kernel = np.ones((patchDim, patchDim))
+    # kernel = np.ones((patchDim, patchDim), np.float32) / (patchDim * patchDim)
+    # conv_img = sp.ndimage.convolve(bw, kernel)
+    # cv2.imshow('conv', conv_img)
+    #
+    
     return bw
 
 def makeNegativeMask_dilate_sub(io, dilate_size):
