@@ -1,4 +1,4 @@
-# Nucleui segmentation (in progress)
+# Nucleui segmentation 
   
 This source includes nucleui segmentation code using deep learing framework(caffe).   
 We converted matlab code[2] to python code to run without MATLAB and implemented on ubuntu 16.04, python3.5, and caffe.
